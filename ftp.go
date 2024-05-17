@@ -11,8 +11,11 @@ import (
 	"io"
 	"net"
 	"net/textproto"
+	"os"
+	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/hashicorp/go-multierror"
@@ -63,6 +66,10 @@ type ServerConn struct {
 	mdtmSupported bool
 	mdtmCanWrite  bool
 	usePRET       bool
+
+	// Server services discovered at runtime
+	siteServices   []string
+	chmodSupported bool
 }
 
 // DialOption represents an option to start a new connection with Dial
@@ -379,6 +386,14 @@ func (c *ServerConn) Login(user, password string) error {
 	_, c.mdtmSupported = c.features["MDTM"]
 	c.mdtmCanWrite = c.mdtmSupported && c.options.writingMDTM
 
+	// Probe services
+	err = c.services()
+	if err != nil {
+		return err
+	}
+
+	c.chmodSupported = slices.Contains(c.siteServices, "CHMOD")
+
 	// Switch to binary mode
 	if err = c.Type(TransferTypeBinary); err != nil {
 		return err
@@ -441,6 +456,19 @@ func (c *ServerConn) feat() error {
 
 		c.features[command] = commandDesc
 	}
+
+	return nil
+}
+
+// services issues a SITE HELP FTP command to list the services supported
+// by the remove FTP server.
+func (c *ServerConn) services() error {
+	_, message, err := c.siteCmd(StatusHelp, "SITE HELP")
+	if err != nil {
+		return err
+	}
+
+	c.siteServices = strings.Split(message, " ")
 
 	return nil
 }
@@ -608,6 +636,15 @@ func (c *ServerConn) cmd(expected int, format string, args ...interface{}) (int,
 	}
 
 	return c.conn.ReadResponse(expected)
+}
+
+func (c *ServerConn) siteCmd(expected int, format string, args ...interface{}) (int, string, error) {
+	_, err := c.conn.Cmd(format, args...)
+	if err != nil {
+		return 0, "", err
+	}
+
+	return c.conn.ReadCodeLine(expected)
 }
 
 // cmdDataConnFrom executes a command which require a FTP data connection.
@@ -1015,6 +1052,39 @@ func (c *ServerConn) Rename(from, to string) error {
 
 	_, _, err = c.cmd(StatusRequestedFileActionOK, "RNTO %s", to)
 	return err
+}
+
+// toChmodMode converts Go's file mode bits to chmod supported mode bits.
+func toChmodMode(mode os.FileMode) uint32 {
+	o := uint32(mode.Perm())
+
+	if mode&os.ModeSetuid != 0 {
+		o |= syscall.S_ISUID
+	}
+	if mode&os.ModeSetgid != 0 {
+		o |= syscall.S_ISGID
+	}
+	if mode&os.ModeSticky != 0 {
+		o |= syscall.S_ISVTX
+	}
+
+	return o
+}
+
+// Chmod changes the permissions of a file on the remote FTP server.
+//
+// Requires the remote FTP server to support the SITE CHMOD FTP command.
+func (c *ServerConn) Chmod(name string, mode os.FileMode) error {
+	if !c.chmodSupported {
+		return &textproto.Error{Code: StatusNotImplemented, Msg: StatusText(StatusNotImplemented)}
+	}
+
+	_, _, err := c.siteCmd(StatusCommandOK, "SITE CHMOD %03d %s", toChmodMode(mode), name)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // Delete issues a DELE FTP command to delete the specified file from the
