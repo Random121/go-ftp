@@ -279,6 +279,17 @@ func (mock *ftpMock) listen() {
 		case "QUIT":
 			mock.printfLine("221 Goodbye.")
 			return
+		case "SITE":
+			if len(cmdParts) < 2 {
+				mock.printfLine("500 Unknown SITE command.")
+				break
+			}
+			switch cmdParts[1] {
+			case "HELP":
+				mock.printfLine("214 CHMOD UMASK HELP")
+			default:
+				mock.printfLine("500 Unknown SITE command.")
+			}
 		default:
 			mock.printfLine("500 Unknown command %s.", cmdParts[0])
 		}
@@ -419,7 +430,7 @@ func openConnExt(t *testing.T, addr, modtime string, options ...DialOption) (*ft
 
 // Helper to close a client connected to a mock server
 func closeConn(t *testing.T, mock *ftpMock, c *ServerConn, commands []string) {
-	expected := []string{"USER", "PASS", "FEAT", "TYPE", "OPTS"}
+	expected := []string{"USER", "PASS", "FEAT", "SITE", "TYPE", "OPTS"}
 	expected = append(expected, commands...)
 	expected = append(expected, "QUIT")
 

@@ -1,4 +1,4 @@
-module github.com/jlaffaye/ftp
+module github.com/Random121/go-ftp
 
 go 1.22.3
 
