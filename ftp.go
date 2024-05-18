@@ -1054,8 +1054,8 @@ func (c *ServerConn) Rename(from, to string) error {
 	return err
 }
 
-// toChmodMode converts Go's file mode bits to chmod supported mode bits.
-func toChmodMode(mode os.FileMode) uint32 {
+// toUnixPermissionBits converts Go's FileMode to standard unix permission bits.
+func toUnixPermissionBits(mode os.FileMode) uint32 {
 	o := uint32(mode.Perm())
 
 	if mode&os.ModeSetuid != 0 {
@@ -1076,10 +1076,15 @@ func toChmodMode(mode os.FileMode) uint32 {
 // Requires the remote FTP server to support the SITE CHMOD FTP command.
 func (c *ServerConn) Chmod(name string, mode os.FileMode) error {
 	if !c.chmodSupported {
-		return &textproto.Error{Code: StatusNotImplemented, Msg: StatusText(StatusNotImplemented)}
+		return &textproto.Error{
+			Code: StatusNotImplemented,
+			Msg:  StatusText(StatusNotImplemented),
+		}
 	}
 
-	_, _, err := c.siteCmd(StatusCommandOK, "SITE CHMOD %03d %s", toChmodMode(mode), name)
+	perm := toUnixPermissionBits(mode)
+
+	_, _, err := c.siteCmd(StatusCommandOK, "SITE CHMOD %o %s", perm, name)
 	if err != nil {
 		return err
 	}
